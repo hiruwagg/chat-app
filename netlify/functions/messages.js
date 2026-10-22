@@ -15,9 +15,10 @@ export default async (req) => {
         try {
             const body = await req.json();
             const existingMessages = await store.get(key, { type: 'json' }) || [];
-
+            
             existingMessages.push(body);
-            if (existingMessages.length > 50) existingMessages.shift();
+            // Keep last 30 messages to manage storage limit efficiently
+            if (existingMessages.length > 30) existingMessages.shift();
 
             await store.setJSON(key, existingMessages);
 
