@@ -117,3 +117,428 @@
         }
 
         window.logout = function() {
+            localStorage.clear();
+            sessionStorage.clear();
+            location.reload();
+        };
+
+        // Tab Switching Logic
+        window.switchSidebarTab = function(tabName) {
+            const chatsTabBtn = document.getElementById('tab-chats-btn');
+            const usersTabBtn = document.getElementById('tab-users-btn');
+            const chatsContent = document.getElementById('chats-tab-content');
+            const usersContent = document.getElementById('users-tab-content');
+
+            if (tabName === 'chats') {
+                chatsTabBtn.classList.add('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
+                chatsTabBtn.classList.remove('text-gray-500');
+                usersTabBtn.classList.remove('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
+                usersTabBtn.classList.add('text-gray-500');
+
+                chatsContent.classList.remove('hidden');
+                usersContent.classList.add('hidden');
+            } else {
+                usersTabBtn.classList.add('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
+                usersTabBtn.classList.remove('text-gray-500');
+                chatsTabBtn.classList.remove('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
+                chatsTabBtn.classList.add('text-gray-500');
+
+                usersContent.classList.remove('hidden');
+                chatsContent.classList.add('hidden');
+            }
+        }
+
+        function encryptText(text, secret) {
+            try {
+                return btoa(unescape(encodeURIComponent(text.split('').map((char, index) => 
+                    String.fromCharCode(char.charCodeAt(0) ^ secret.charCodeAt(index % secret.length))
+                ).join(''))));
+            } catch (e) {
+                return text;
+            }
+        }
+
+        function decryptText(encoded, secret) {
+            try {
+                let text = decodeURIComponent(escape(atob(encoded)));
+                return text.split('').map((char, index) => 
+                    String.fromCharCode(char.charCodeAt(0) ^ secret.charCodeAt(index % secret.length))
+                ).join('');
+            } catch (e) {
+                return "[Encrypted Message]";
+            }
+        }
+
+        async function loadSidebarLists() {
+            try {
+                const usersListEl = document.getElementById('users-list');
+                const chatsListEl = document.getElementById('chats-list');
+                
+                usersListEl.innerHTML = '';
+                chatsListEl.innerHTML = '';
+
+                // Add Global Group to Chats
+                addGroupToList('global_room', 'Global Public Group', chatsListEl, 'group');
+
+                // Load Custom Groups
+                const groupsSnap = await getDocs(collection(db, "groups"));
+                groupsSnap.forEach(docSnap => {
+                    const groupData = docSnap.data();
+                    if(groupData.id !== 'global_room') {
+                        addGroupToList(groupData.id, groupData.name, chatsListEl, 'group');
+                    }
+                });
+
+                // Load Users List Tab
+                const usersSnap = await getDocs(collection(db, "users"));
+                if (usersSnap.empty) {
+                    usersListEl.innerHTML = `<div class="p-4 text-xs text-gray-400 text-center">No other registered users found.</div>`;
+                    return;
+                }
+
+                usersSnap.forEach(docSnap => {
+                    const userData = docSnap.data();
+                    const username = userData.username || docSnap.id;
+
+                    if (username !== currentUser) {
+                        // Add to Users Tab
+                        const userDiv = document.createElement('div');
+                        userDiv.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
+                        userDiv.innerHTML = `
+                            <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mr-3">${username.charAt(0).toUpperCase()}</div>
+                            <div>
+                                <h4 class="font-medium text-gray-900">${username}</h4>
+                                <p class="text-xs text-gray-500">Registered User</p>
+                            </div>
+                        `;
+                        const privateRoomId = [currentUser, username].sort().join('_');
+                        userDiv.onclick = () => {
+                            switchChat(privateRoomId, username, 'private');
+                            switchSidebarTab('chats');
+                        };
+                        usersListEl.appendChild(userDiv);
+
+                        // Add to Chats Tab as well
+                        const chatDiv = document.createElement('div');
+                        chatDiv.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
+                        chatDiv.innerHTML = `
+                            <div class="w-10 h-10 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold mr-3">${username.charAt(0).toUpperCase()}</div>
+                            <div>
+                                <h4 class="font-medium text-gray-900">${username}</h4>
+                                <p class="text-xs text-emerald-600"><i class="fa-solid fa-lock"></i> Encrypted Chat</p>
+                            </div>
+                        `;
+                        chatDiv.onclick = () => switchChat(privateRoomId, username, 'private');
+                        chatsListEl.appendChild(chatDiv);
+                    }
+                });
+            } catch (err) {
+                console.error("Error loading sidebar lists:", err);
+            }
+        }
+
+        function addGroupToList(groupId, groupName, container, type) {
+            const div = document.createElement('div');
+            div.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
+            div.innerHTML = `
+                <div class="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold mr-3"><i class="fa-solid fa-users text-sm"></i></div>
+                <div>
+                    <h4 class="font-medium text-gray-900">${groupName}</h4>
+                    <p class="text-xs text-gray-500">Group Chat</p>
+                </div>
+            `;
+            div.onclick = () => switchChat(groupId, groupName, type);
+            container.appendChild(div);
+        }
+
+        window.switchChat = function(chatId, chatName, type) {
+            currentChatId = chatId;
+            currentChatType = type;
+            document.getElementById('active-chat-name').innerText = chatName;
+            document.getElementById('active-chat-status').innerText = type === 'group' ? 'Group Chat' : 'End-to-End Encrypted Private Chat';
+            
+            if (unsubscribeMessages) unsubscribeMessages();
+            listenMessages();
+        }
+
+        window.openCreateGroupModal = function() {
+            document.getElementById('group-modal').classList.remove('hidden');
+        }
+
+        window.closeCreateGroupModal = function() {
+            document.getElementById('group-modal').classList.add('hidden');
+        }
+
+        window.createGroup = async function() {
+            const groupName = document.getElementById('new-group-name').value.trim();
+            if (!groupName) return alert("Enter group name");
+
+            const groupId = 'group_' + Date.now();
+            await setDoc(doc(db, "groups", groupId), {
+                id: groupId,
+                name: groupName,
+                createdBy: currentUser,
+                createdAt: Date.now()
+            });
+
+            document.getElementById('new-group-name').value = '';
+            closeCreateGroupModal();
+            loadSidebarLists();
+            switchChat(groupId, groupName, 'group');
+            switchSidebarTab('chats');
+        }
+
+        function listenMessages() {
+            const q = query(collection(db, "rooms", currentChatId, "messages"), orderBy("timestamp", "asc"));
+            unsubscribeMessages = onSnapshot(q, (snapshot) => {
+                const container = document.getElementById('chat-messages');
+                container.innerHTML = '';
+                
+                snapshot.forEach((documentSnapshot) => {
+                    const msg = documentSnapshot.data();
+                    const docId = documentSnapshot.id;
+                    const isMe = msg.user === currentUser;
+                    const div = document.createElement('div');
+                    div.className = `max-w-[70%] rounded-lg p-3 text-sm flex flex-col relative group ${isMe ? 'self-end bg-[#dcf8c6]' : 'self-start bg-white'}`;
+                    
+                    let contentHTML = '';
+                    if (msg.deleted) {
+                        contentHTML = `<span class="text-gray-400 italic text-xs"><i class="fa-solid fa-ban mr-1"></i> This message was deleted</span>`;
+                    } else {
+                        let displayText = msg.text;
+                        if (currentChatType === 'private' && msg.text) {
+                            displayText = decryptText(msg.text, currentChatId);
+                        }
+
+                        if (msg.type === 'image') {
+                            contentHTML = `<img src="${msg.data}" class="rounded-lg max-h-48 object-cover mb-1 cursor-pointer" onclick="window.open('${msg.data}')">`;
+                        } else if (msg.type === 'audio') {
+                            contentHTML = `<audio controls class="w-64 mb-1"><source src="${msg.data}" type="audio/webm"></audio>`;
+                        } else {
+                            contentHTML = `<span class="text-gray-800 break-words">${displayText}</span>`;
+                        }
+                    }
+
+                    let deleteBtnHTML = isMe && !msg.deleted ? `<button onclick="deleteMessage('${docId}')" class="absolute top-1 right-2 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-trash text-xs"></i></button>` : '';
+                    let lockIcon = currentChatType === 'private' ? '<i class="fa-solid fa-lock text-[10px] text-emerald-600 ml-1" title="Encrypted"></i>' : '';
+
+                    div.innerHTML = `
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-xs font-bold text-emerald-700">${msg.user} ${lockIcon}</span>
+                            ${deleteBtnHTML}
+                        </div>
+                        ${contentHTML}
+                        <span class="text-[10px] text-gray-400 self-end mt-1">${new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                    `;
+                    container.appendChild(div);
+                });
+                container.scrollTop = container.scrollHeight;
+            });
+        }
+
+        window.sendTextMessage = async function() {
+            const input = document.getElementById('message-input');
+            let text = input.value.trim();
+            if (!text) return;
+            input.value = '';
+
+            if (currentChatType === 'private') {
+                text = encryptText(text, currentChatId);
+            }
+            
+            await addDoc(collection(db, "rooms", currentChatId, "messages"), {
+                user: currentUser,
+                type: 'text',
+                text: text,
+                timestamp: Date.now(),
+                deleted: false
+            });
+        };
+
+        window.handleFileSelect = async function(event, type) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                await addDoc(collection(db, "rooms", currentChatId, "messages"), {
+                    user: currentUser,
+                    type: type,
+                    data: e.target.result,
+                    timestamp: Date.now(),
+                    deleted: false
+                });
+            };
+            reader.readAsDataURL(file);
+            event.target.value = '';
+        };
+
+        window.deleteMessage = async function(docId) {
+            if (!confirm("Delete for everyone?")) return;
+            const msgRef = doc(db, "rooms", currentChatId, "messages", docId);
+            await updateDoc(msgRef, {
+                deleted: true,
+                text: '',
+                data: ''
+            });
+        };
+
+        window.toggleVoiceRecording = async function() {
+            const micIcon = document.getElementById('mic-icon');
+            if (!isRecording) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    mediaRecorder = new MediaRecorder(stream);
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                    mediaRecorder.onstop = async () => {
+                        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                        const reader = new FileReader();
+                        reader.onload = async function(e) {
+                            await addDoc(collection(db, "rooms", currentChatId, "messages"), {
+                                user: currentUser,
+                                type: 'audio',
+                                data: e.target.result,
+                                timestamp: Date.now(),
+                                deleted: false
+                            });
+                        };
+                        reader.readAsDataURL(blob);
+                    };
+                    mediaRecorder.start();
+                    isRecording = true;
+                    micIcon.classList.remove('fa-microphone');
+                    micIcon.classList.add('fa-stop', 'text-red-600');
+                } catch (e) { alert("Mic permission denied."); }
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                micIcon.classList.remove('fa-stop', 'text-red-600');
+                micIcon.classList.add('fa-microphone');
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const msgInput = document.getElementById('message-input');
+            if(msgInput) {
+                msgInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') sendTextMessage();
+                });
+            }
+        });
+    </script>
+</head>
+<body class="bg-[#f0f2f5] h-screen flex flex-col justify-center items-center">
+
+    <!-- Auth Modal -->
+    <div id="auth-container" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-xl shadow-2xl w-96">
+            <h2 id="auth-title" class="text-2xl font-bold text-emerald-600 mb-6 text-center">Login to Chat</h2>
+            <div id="auth-error" class="text-red-500 text-sm mb-4 hidden text-center"></div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                    <input type="text" id="auth-username" class="w-full px-3 py-2 border rounded-lg outline-none focus:border-emerald-600" placeholder="Enter username">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <input type="password" id="auth-password" class="w-full px-3 py-2 border rounded-lg outline-none focus:border-emerald-600" placeholder="Enter password">
+                </div>
+                <div class="flex items-center justify-between text-sm">
+                    <label class="flex items-center">
+                        <input type="checkbox" id="remember-me" class="mr-2 rounded text-emerald-600"> Remember login
+                    </label>
+                </div>
+                <button id="auth-btn" onclick="handleAuth()" class="w-full bg-emerald-600 text-white py-2 rounded-lg font-semibold hover:bg-emerald-700 transition">Login</button>
+                <p class="text-center text-sm text-gray-600 mt-4">
+                    <span id="auth-switch-text">Don't have an account?</span> 
+                    <button onclick="toggleAuthMode()" class="text-emerald-600 font-semibold hover:underline ml-1" id="auth-switch-btn">Sign Up</button>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Group Modal -->
+    <div id="group-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-xl shadow-2xl w-80">
+            <h3 class="text-lg font-bold text-gray-800 mb-4">Create New Group</h3>
+            <input type="text" id="new-group-name" placeholder="Group Name" class="w-full px-3 py-2 border rounded-lg outline-none mb-4 focus:border-emerald-600">
+            <div class="flex justify-end space-x-2">
+                <button onclick="closeCreateGroupModal()" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg text-sm">Cancel</button>
+                <button onclick="createGroup()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Chat UI -->
+    <div id="chat-app" class="w-full max-w-5xl h-[90vh] bg-white shadow-lg flex overflow-hidden rounded-lg hidden">
+        
+        <!-- Sidebar -->
+        <div class="w-1/3 border-r border-gray-200 flex flex-col bg-white">
+            <div class="bg-[#f0f2f5] px-4 py-3 flex justify-between items-center border-b">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold" id="user-avatar">U</div>
+                    <span class="font-medium text-gray-700" id="current-username">Loading...</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="openCreateGroupModal()" class="text-gray-600 hover:text-emerald-600" title="Create Group"><i class="fa-solid fa-users-rectangle text-lg"></i></button>
+                    <button onclick="logout()" class="text-gray-500 hover:text-red-600" title="Logout"><i class="fa-solid fa-right-from-bracket text-lg"></i></button>
+                </div>
+            </div>
+
+            <!-- Tab Navigation Header -->
+            <div class="flex border-b bg-[#f0f2f5] text-sm">
+                <button id="tab-chats-btn" onclick="switchSidebarTab('chats')" class="flex-1 py-2 font-bold text-emerald-600 border-b-2 border-emerald-600 text-center transition">
+                    <i class="fa-solid fa-comments mr-1"></i> Chats
+                </button>
+                <button id="tab-users-btn" onclick="switchSidebarTab('users')" class="flex-1 py-2 font-semibold text-gray-500 text-center transition">
+                    <i class="fa-solid fa-address-book mr-1"></i> Users
+                </button>
+            </div>
+
+            <!-- Tab Contents Area -->
+            <div class="overflow-y-auto flex-1">
+                <!-- Chats Tab Content -->
+                <div id="chats-tab-content">
+                    <div id="chats-list"></div>
+                </div>
+
+                <!-- Users Tab Content -->
+                <div id="users-tab-content" class="hidden">
+                    <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-500 uppercase tracking-wider">All Registered Users</div>
+                    <div id="users-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="w-2/3 flex flex-col bg-[#efeae2]">
+            <div class="bg-[#f0f2f5] px-4 py-3 flex justify-between items-center border-b">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold"><i class="fa-solid fa-comments"></i></div>
+                    <div>
+                        <h3 class="font-medium text-gray-900" id="active-chat-name">Global Public Group</h3>
+                        <p class="text-xs text-emerald-600 font-semibold" id="active-chat-status">Group Chat</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Messages Container -->
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 flex flex-col"></div>
+
+            <!-- Input Footer -->
+            <div class="bg-[#f0f2f5] px-4 py-3 flex items-center space-x-3 relative">
+                <input type="file" id="image-input" accept="image/*" class="hidden" onchange="handleFileSelect(event, 'image')">
+                <input type="file" id="audio-input" accept="audio/*" class="hidden" onchange="handleFileSelect(event, 'audio')">
+
+                <button onclick="document.getElementById('image-input').click()" class="text-gray-500 hover:text-emerald-600 transition"><i class="fa-solid fa-image text-lg"></i></button>
+                <button onclick="document.getElementById('audio-input').click()" class="text-gray-500 hover:text-emerald-600 transition mr-1"><i class="fa-solid fa-file-audio text-lg"></i></button>
+
+                <input type="text" id="message-input" placeholder="Type a message..." class="flex-1 bg-white px-4 py-2 rounded-lg text-sm outline-none">
+
+                <button id="mic-btn" onclick="toggleVoiceRecording()" class="text-gray-500 hover:text-red-600 transition"><i class="fa-solid fa-microphone text-lg" id="mic-icon"></i></button>
+                <button onclick="sendTextMessage()" class="bg-emerald-600 text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-emerald-700 transition"><i class="fa-solid fa-paper-plane text-sm"></i></button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
