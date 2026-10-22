@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Chat with Firebase</title>
+    <title>WhatsApp Clone - Private & Group Chat</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, orderBy, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, orderBy, setDoc, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // Your Firebase Config
+        // REPLACE WITH YOUR FIREBASE CONFIG
         const firebaseConfig = {
             apiKey: "AIzaSyCGHuFn0rpJKzyajLw6VEbsVaEw6JAI4YM",
             authDomain: "chat-app-7b1ff.firebaseapp.com",
@@ -27,7 +27,10 @@
         const db = getFirestore(app);
 
         let currentUser = null;
+        let currentChatId = "global_room";
+        let currentChatType = "group"; // 'group' or 'private'
         let mediaRecorder, audioChunks = [], isRecording = false;
+        let unsubscribeMessages = null;
 
         window.onload = function() {
             const rememberedUser = localStorage.getItem('chat_remembered_user') || sessionStorage.getItem('chat_session_user');
@@ -69,7 +72,7 @@
                         errorDiv.classList.remove('hidden');
                         return;
                     }
-                    await setDoc(userRef, { password: password });
+                    await setDoc(userRef, { password: password, username: username });
                 } else {
                     if (!userSnap.exists() || userSnap.data().password !== password) {
                         errorDiv.innerText = "Invalid username or password!";
@@ -93,7 +96,8 @@
             document.getElementById('chat-app').classList.remove('hidden');
             document.getElementById('current-username').innerText = currentUser;
             document.getElementById('user-avatar').innerText = currentUser.charAt(0).toUpperCase();
-            listenMessages();
+            loadSidebarLists();
+            switchChat('global_room', 'Global Public Group', 'group');
         }
 
         window.logout = function() {
@@ -102,10 +106,100 @@
             location.reload();
         };
 
-        // Real-time listener using Firebase Firestore
+        // Load Users and Groups in Sidebar
+        async function loadSidebarLists() {
+            // Load Users for private chat
+            const usersSnap = await getDocs(collection(db, "users"));
+            const usersListEl = document.getElementById('users-list');
+            usersListEl.innerHTML = '';
+            usersSnap.forEach(docSnap => {
+                const userData = docSnap.data();
+                if (userData.username !== currentUser) {
+                    const div = document.createElement('div');
+                    div.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
+                    div.innerHTML = `
+                        <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mr-3">${userData.username.charAt(0).toUpperCase()}</div>
+                        <div>
+                            <h4 class="font-medium text-gray-900">${userData.username}</h4>
+                            <p class="text-xs text-gray-500">Private Chat</p>
+                        </div>
+                    `;
+                    // Unique private chat room ID between two users
+                    const privateRoomId = [currentUser, userData.username].sort().join('_');
+                    div.onclick = () => switchChat(privateRoomId, userData.username, 'private');
+                    usersListEl.appendChild(div);
+                }
+            });
+
+            // Load Groups
+            const groupsSnap = await getDocs(collection(db, "groups"));
+            const groupsListEl = document.getElementById('groups-list');
+            groupsListEl.innerHTML = '';
+            // Always add global room
+            addGroupToList('global_room', 'Global Public Group', groupsListEl);
+
+            groupsSnap.forEach(docSnap => {
+                const groupData = docSnap.data();
+                if(groupData.id !== 'global_room') {
+                    addGroupToList(groupData.id, groupData.name, groupsListEl);
+                }
+            });
+        }
+
+        function addGroupToList(groupId, groupName, container) {
+            const div = document.createElement('div');
+            div.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
+            div.innerHTML = `
+                <div class="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold mr-3"><i class="fa-solid fa-users text-sm"></i></div>
+                <div>
+                    <h4 class="font-medium text-gray-900">${groupName}</h4>
+                    <p class="text-xs text-gray-500">Group Chat</p>
+                </div>
+            `;
+            div.onclick = () => switchChat(groupId, groupName, 'group');
+            container.appendChild(div);
+        }
+
+        window.switchChat = function(chatId, chatName, type) {
+            currentChatId = chatId;
+            currentChatType = type;
+            document.getElementById('active-chat-name').innerText = chatName;
+            document.getElementById('active-chat-status').innerText = type === 'group' ? 'Group Chat' : 'Online Private Chat';
+            
+            if (unsubscribeMessages) unsubscribeMessages();
+            listenMessages();
+        }
+
+        window.openCreateGroupModal = function() {
+            document.getElementById('group-modal').classList.remove('hidden');
+        }
+
+        window.closeCreateGroupModal = function() {
+            document.getElementById('group-modal').classList.add('hidden');
+        }
+
+        window.createGroup = async function() {
+            const groupName = document.getElementById('new-group-name').value.trim();
+            if (!groupName) return alert("Enter group name");
+
+            const groupId = 'group_' + Date.now();
+            await setDoc(doc(db, "groups", groupId), {
+                id: groupId,
+                name: groupName,
+                createdBy: currentUser,
+                createdAt: Date.now()
+            });
+
+            document.getElementById('new-group-name').value = '';
+            closeCreateGroupModal();
+            loadSidebarLists();
+            switchChat(groupId, groupName, 'group');
+        }
+
+        // Real-time listener for messages in current chat room
         function listenMessages() {
-            const q = query(collection(db, "messages"), orderBy("timestamp", "asc"));
-            onSnapshot(q, (snapshot) => {
+            const q = query(collection(db, "rooms", currentChatId, "messages"), orderBy("timestamp", "asc"));
+            unsubscribeMessages = onSnapshot(q, (snapshot) => {
                 const container = document.getElementById('chat-messages');
                 container.innerHTML = '';
                 
@@ -144,14 +238,15 @@
             const input = document.getElementById('message-input');
             const text = input.value.trim();
             if (!text) return;
-            await addDoc(collection(db, "messages"), {
+            input.value = '';
+            
+            await addDoc(collection(db, "rooms", currentChatId, "messages"), {
                 user: currentUser,
                 type: 'text',
                 text: text,
                 timestamp: Date.now(),
                 deleted: false
             });
-            input.value = '';
         };
 
         window.handleFileSelect = async function(event, type) {
@@ -159,7 +254,7 @@
             if (!file) return;
             const reader = new FileReader();
             reader.onload = async function(e) {
-                await addDoc(collection(db, "messages"), {
+                await addDoc(collection(db, "rooms", currentChatId, "messages"), {
                     user: currentUser,
                     type: type,
                     data: e.target.result,
@@ -173,7 +268,7 @@
 
         window.deleteMessage = async function(docId) {
             if (!confirm("Delete for everyone?")) return;
-            const msgRef = doc(db, "messages", docId);
+            const msgRef = doc(db, "rooms", currentChatId, "messages", docId);
             await updateDoc(msgRef, {
                 deleted: true,
                 text: '',
@@ -193,7 +288,7 @@
                         const blob = new Blob(audioChunks, { type: 'audio/webm' });
                         const reader = new FileReader();
                         reader.onload = async function(e) {
-                            await addDoc(collection(db, "messages"), {
+                            await addDoc(collection(db, "rooms", currentChatId, "messages"), {
                                 user: currentUser,
                                 type: 'audio',
                                 data: e.target.result,
@@ -216,8 +311,13 @@
             }
         };
 
-        document.getElementById('message-input').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendTextMessage();
+        document.addEventListener('DOMContentLoaded', () => {
+            const msgInput = document.getElementById('message-input');
+            if(msgInput) {
+                msgInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') sendTextMessage();
+                });
+            }
         });
     </script>
 </head>
@@ -251,46 +351,61 @@
         </div>
     </div>
 
+    <!-- Create Group Modal -->
+    <div id="group-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-xl shadow-2xl w-80">
+            <h3 class="text-lg font-bold text-gray-800 mb-4">Create New Group</h3>
+            <input type="text" id="new-group-name" placeholder="Group Name" class="w-full px-3 py-2 border rounded-lg outline-none mb-4 focus:border-emerald-600">
+            <div class="flex justify-end space-x-2">
+                <button onclick="closeCreateGroupModal()" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg text-sm">Cancel</button>
+                <button onclick="createGroup()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm">Create</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Main Chat UI -->
     <div id="chat-app" class="w-full max-w-5xl h-[90vh] bg-white shadow-lg flex overflow-hidden rounded-lg hidden">
+        
+        <!-- Sidebar -->
         <div class="w-1/3 border-r border-gray-200 flex flex-col bg-white">
             <div class="bg-[#f0f2f5] px-4 py-3 flex justify-between items-center border-b">
                 <div class="flex items-center space-x-3">
                     <div class="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold" id="user-avatar">U</div>
                     <span class="font-medium text-gray-700" id="current-username">Loading...</span>
                 </div>
-                <button onclick="logout()" class="text-gray-500 hover:text-red-600" title="Logout"><i class="fa-solid fa-right-from-bracket"></i></button>
-            </div>
-            <div class="p-3 bg-white border-b">
-                <div class="bg-[#f0f2f5] flex items-center px-3 py-1.5 rounded-lg">
-                    <i class="fa-solid fa-magnifying-glass text-gray-400 mr-3"></i>
-                    <input type="text" placeholder="Search chat" class="bg-transparent w-full text-sm outline-none">
+                <div class="flex items-center space-x-2">
+                    <button onclick="openCreateGroupModal()" class="text-gray-600 hover:text-emerald-600" title="Create Group"><i class="fa-solid fa-users-rectangle text-lg"></i></button>
+                    <button onclick="logout()" class="text-gray-500 hover:text-red-600" title="Logout"><i class="fa-solid fa-right-from-bracket text-lg"></i></button>
                 </div>
             </div>
+
             <div class="overflow-y-auto flex-1">
-                <div class="flex items-center px-4 py-3 bg-[#f0f2f5] border-b">
-                    <div class="w-12 h-12 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-lg mr-3">G</div>
-                    <div>
-                        <h4 class="font-medium text-gray-900">Firebase Real-time Chat</h4>
-                        <p class="text-xs text-emerald-600 font-semibold">Lightning Fast Sync</p>
-                    </div>
-                </div>
+                <!-- Groups Section -->
+                <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-600 uppercase tracking-wider">Groups</div>
+                <div id="groups-list"></div>
+
+                <!-- Users Section (Private Chat) -->
+                <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-600 uppercase tracking-wider mt-2">Registered Users (Private Chat)</div>
+                <div id="users-list"></div>
             </div>
         </div>
 
+        <!-- Chat Area -->
         <div class="w-2/3 flex flex-col bg-[#efeae2]">
             <div class="bg-[#f0f2f5] px-4 py-3 flex justify-between items-center border-b">
                 <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold">G</div>
+                    <div class="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold"><i class="fa-solid fa-comments"></i></div>
                     <div>
-                        <h3 class="font-medium text-gray-900">Firebase Real-time Chat</h3>
-                        <p class="text-xs text-emerald-600 font-semibold">Online</p>
+                        <h3 class="font-medium text-gray-900" id="active-chat-name">Global Public Group</h3>
+                        <p class="text-xs text-emerald-600 font-semibold" id="active-chat-status">Group Chat</p>
                     </div>
                 </div>
             </div>
 
+            <!-- Messages Container -->
             <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 flex flex-col"></div>
 
+            <!-- Input Footer -->
             <div class="bg-[#f0f2f5] px-4 py-3 flex items-center space-x-3 relative">
                 <input type="file" id="image-input" accept="image/*" class="hidden" onchange="handleFileSelect(event, 'image')">
                 <input type="file" id="audio-input" accept="audio/*" class="hidden" onchange="handleFileSelect(event, 'audio')">
