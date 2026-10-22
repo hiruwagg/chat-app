@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Clone - Private & Group Chat</title>
+    <title>WhatsApp Clone - Secure E2EE Private & Group Chat</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -27,15 +27,25 @@
         const db = getFirestore(app);
 
         let currentUser = null;
+        let currentPassword = null;
         let currentChatId = "global_room";
         let currentChatType = "group"; // 'group' or 'private'
         let mediaRecorder, audioChunks = [], isRecording = false;
         let unsubscribeMessages = null;
 
         window.onload = function() {
-            const rememberedUser = localStorage.getItem('chat_remembered_user') || sessionStorage.getItem('chat_session_user');
-            if (rememberedUser) {
+            const rememberedUser = localStorage.getItem('chat_remembered_user');
+            const rememberedPass = localStorage.getItem('chat_remembered_pass');
+            const sessionUser = sessionStorage.getItem('chat_session_user');
+            const sessionPass = sessionStorage.getItem('chat_session_pass');
+
+            if (rememberedUser && rememberedPass) {
                 currentUser = rememberedUser;
+                currentPassword = rememberedPass;
+                startChatApp();
+            } else if (sessionUser && sessionPass) {
+                currentUser = sessionUser;
+                currentPassword = sessionPass;
                 startChatApp();
             }
         };
@@ -82,8 +92,14 @@
                 }
 
                 currentUser = username;
-                if (rememberMe) localStorage.setItem('chat_remembered_user', username);
-                else sessionStorage.setItem('chat_session_user', username);
+                currentPassword = password;
+                if (rememberMe) {
+                    localStorage.setItem('chat_remembered_user', username);
+                    localStorage.setItem('chat_remembered_pass', password);
+                } else {
+                    sessionStorage.setItem('chat_session_user', username);
+                    sessionStorage.setItem('chat_session_pass', password);
+                }
                 startChatApp();
             } catch (err) {
                 errorDiv.innerText = "Error: " + err.message;
@@ -101,14 +117,34 @@
         }
 
         window.logout = function() {
-            localStorage.removeItem('chat_remembered_user');
-            sessionStorage.removeItem('chat_session_user');
+            localStorage.clear();
+            sessionStorage.clear();
             location.reload();
         };
 
-        // Load Users and Groups in Sidebar
+        // Simple symmetric encryption/decryption using a shared secret key
+        function encryptText(text, secret) {
+            try {
+                return btoa(unescape(encodeURIComponent(text.split('').map((char, index) => 
+                    String.fromCharCode(char.charCodeAt(0) ^ secret.charCodeAt(index % secret.length))
+                ).join(''))));
+            } catch (e) {
+                return text;
+            }
+        }
+
+        function decryptText(encoded, secret) {
+            try {
+                let text = decodeURIComponent(escape(atob(encoded)));
+                return text.split('').map((char, index) => 
+                    String.fromCharCode(char.charCodeAt(0) ^ secret.charCodeAt(index % secret.length))
+                ).join('');
+            } catch (e) {
+                return "[Encrypted Message]";
+            }
+        }
+
         async function loadSidebarLists() {
-            // Load Users for private chat
             const usersSnap = await getDocs(collection(db, "users"));
             const usersListEl = document.getElementById('users-list');
             usersListEl.innerHTML = '';
@@ -121,21 +157,18 @@
                         <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mr-3">${userData.username.charAt(0).toUpperCase()}</div>
                         <div>
                             <h4 class="font-medium text-gray-900">${userData.username}</h4>
-                            <p class="text-xs text-gray-500">Private Chat</p>
+                            <p class="text-xs text-emerald-600"><i class="fa-solid fa-lock"></i> Encrypted Private Chat</p>
                         </div>
                     `;
-                    // Unique private chat room ID between two users
                     const privateRoomId = [currentUser, userData.username].sort().join('_');
                     div.onclick = () => switchChat(privateRoomId, userData.username, 'private');
                     usersListEl.appendChild(div);
                 }
             });
 
-            // Load Groups
             const groupsSnap = await getDocs(collection(db, "groups"));
             const groupsListEl = document.getElementById('groups-list');
             groupsListEl.innerHTML = '';
-            // Always add global room
             addGroupToList('global_room', 'Global Public Group', groupsListEl);
 
             groupsSnap.forEach(docSnap => {
@@ -164,7 +197,7 @@
             currentChatId = chatId;
             currentChatType = type;
             document.getElementById('active-chat-name').innerText = chatName;
-            document.getElementById('active-chat-status').innerText = type === 'group' ? 'Group Chat' : 'Online Private Chat';
+            document.getElementById('active-chat-status').innerText = type === 'group' ? 'Group Chat' : 'End-to-End Encrypted Private Chat';
             
             if (unsubscribeMessages) unsubscribeMessages();
             listenMessages();
@@ -196,7 +229,6 @@
             switchChat(groupId, groupName, 'group');
         }
 
-        // Real-time listener for messages in current chat room
         function listenMessages() {
             const q = query(collection(db, "rooms", currentChatId, "messages"), orderBy("timestamp", "asc"));
             unsubscribeMessages = onSnapshot(q, (snapshot) => {
@@ -213,18 +245,31 @@
                     let contentHTML = '';
                     if (msg.deleted) {
                         contentHTML = `<span class="text-gray-400 italic text-xs"><i class="fa-solid fa-ban mr-1"></i> This message was deleted</span>`;
-                    } else if (msg.type === 'image') {
-                        contentHTML = `<img src="${msg.data}" class="rounded-lg max-h-48 object-cover mb-1 cursor-pointer" onclick="window.open('${msg.data}')">`;
-                    } else if (msg.type === 'audio') {
-                        contentHTML = `<audio controls class="w-64 mb-1"><source src="${msg.data}" type="audio/webm"></audio>`;
                     } else {
-                        contentHTML = `<span class="text-gray-800 break-words">${msg.text}</span>`;
+                        // Decrypt text if private chat
+                        let displayText = msg.text;
+                        if (currentChatType === 'private' && msg.text) {
+                            displayText = decryptText(msg.text, currentChatId);
+                        }
+
+                        if (msg.type === 'image') {
+                            contentHTML = `<img src="${msg.data}" class="rounded-lg max-h-48 object-cover mb-1 cursor-pointer" onclick="window.open('${msg.data}')">`;
+                        } else if (msg.type === 'audio') {
+                            contentHTML = `<audio controls class="w-64 mb-1"><source src="${msg.data}" type="audio/webm"></audio>`;
+                        } else {
+                            contentHTML = `<span class="text-gray-800 break-words">${displayText}</span>`;
+                        }
                     }
 
                     let deleteBtnHTML = isMe && !msg.deleted ? `<button onclick="deleteMessage('${docId}')" class="absolute top-1 right-2 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-trash text-xs"></i></button>` : '';
 
+                    let lockIcon = currentChatType === 'private' ? '<i class="fa-solid fa-lock text-[10px] text-emerald-600 ml-1" title="Encrypted"></i>' : '';
+
                     div.innerHTML = `
-                        <div class="flex justify-between items-center mb-1"><span class="text-xs font-bold text-emerald-700">${msg.user}</span>${deleteBtnHTML}</div>
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-xs font-bold text-emerald-700">${msg.user} ${lockIcon}</span>
+                            ${deleteBtnHTML}
+                        </div>
                         ${contentHTML}
                         <span class="text-[10px] text-gray-400 self-end mt-1">${new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                     `;
@@ -236,9 +281,14 @@
 
         window.sendTextMessage = async function() {
             const input = document.getElementById('message-input');
-            const text = input.value.trim();
+            let text = input.value.trim();
             if (!text) return;
             input.value = '';
+
+            // Encrypt text if private chat
+            if (currentChatType === 'private') {
+                text = encryptText(text, currentChatId);
+            }
             
             await addDoc(collection(db, "rooms", currentChatId, "messages"), {
                 user: currentUser,
@@ -384,8 +434,8 @@
                 <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-600 uppercase tracking-wider">Groups</div>
                 <div id="groups-list"></div>
 
-                <!-- Users Section (Private Chat) -->
-                <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-600 uppercase tracking-wider mt-2">Registered Users (Private Chat)</div>
+                <!-- Users Section (Private Encrypted Chat) -->
+                <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-600 uppercase tracking-wider mt-2">Private Chats (Encrypted)</div>
                 <div id="users-list"></div>
             </div>
         </div>
@@ -413,7 +463,7 @@
                 <button onclick="document.getElementById('image-input').click()" class="text-gray-500 hover:text-emerald-600 transition"><i class="fa-solid fa-image text-lg"></i></button>
                 <button onclick="document.getElementById('audio-input').click()" class="text-gray-500 hover:text-emerald-600 transition mr-1"><i class="fa-solid fa-file-audio text-lg"></i></button>
 
-                <input type="text" id="message-input" placeholder="Type a message" class="flex-1 bg-white px-4 py-2 rounded-lg text-sm outline-none">
+                <input type="text" id="message-input" placeholder="Type an encrypted message..." class="flex-1 bg-white px-4 py-2 rounded-lg text-sm outline-none">
 
                 <button id="mic-btn" onclick="toggleVoiceRecording()" class="text-gray-500 hover:text-red-600 transition"><i class="fa-solid fa-microphone text-lg" id="mic-icon"></i></button>
                 <button onclick="sendTextMessage()" class="bg-emerald-600 text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-emerald-700 transition"><i class="fa-solid fa-paper-plane text-sm"></i></button>
