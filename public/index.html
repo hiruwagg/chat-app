@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Clone - Secure Chat with Tabs</title>
+    <title>WhatsApp Clone - Secure Chat with Presence</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, orderBy, setDoc, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, orderBy, setDoc, getDoc, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
         // REPLACE WITH YOUR FIREBASE CONFIG
         const firebaseConfig = {
@@ -32,6 +32,7 @@
         let currentChatType = "group"; // 'group' or 'private'
         let mediaRecorder, audioChunks = [], isRecording = false;
         let unsubscribeMessages = null;
+        let unsubscribePresence = null;
 
         window.onload = function() {
             const rememberedUser = localStorage.getItem('chat_remembered_user');
@@ -82,7 +83,7 @@
                         errorDiv.classList.remove('hidden');
                         return;
                     }
-                    await setDoc(userRef, { password: password, username: username });
+                    await setDoc(userRef, { password: password, username: username, status: 'online', lastSeen: Date.now() });
                 } else {
                     if (!userSnap.exists() || userSnap.data().password !== password) {
                         errorDiv.innerText = "Invalid username or password!";
@@ -112,17 +113,40 @@
             document.getElementById('chat-app').classList.remove('hidden');
             document.getElementById('current-username').innerText = currentUser;
             document.getElementById('user-avatar').innerText = currentUser.charAt(0).toUpperCase();
+            
+            setupPresence();
             loadSidebarLists();
             switchChat('global_room', 'Global Public Group', 'group');
         }
 
-        window.logout = function() {
+        // Presence Management (Online / Last Seen)
+        async function setupPresence() {
+            const userRef = doc(db, "users", currentUser);
+            await updateDoc(userRef, { status: 'online', lastSeen: Date.now() });
+
+            // Set offline on page unload/close
+            window.addEventListener('beforeunload', async () => {
+                await updateDoc(userRef, { status: 'offline', lastSeen: Date.now() });
+            });
+
+            // Periodically ping heartbeat
+            setInterval(async () => {
+                if (currentUser) {
+                    await updateDoc(userRef, { lastSeen: Date.now(), status: 'online' }).catch(() => {});
+                }
+            }, 30000);
+        }
+
+        window.logout = async function() {
+            if (currentUser) {
+                const userRef = doc(db, "users", currentUser);
+                await updateDoc(userRef, { status: 'offline', lastSeen: Date.now() }).catch(() => {});
+            }
             localStorage.clear();
             sessionStorage.clear();
             location.reload();
         };
 
-        // Tab Switching Logic
         window.switchSidebarTab = function(tabName) {
             const chatsTabBtn = document.getElementById('tab-chats-btn');
             const usersTabBtn = document.getElementById('tab-users-btn');
@@ -169,6 +193,14 @@
             }
         }
 
+        function formatLastSeen(timestamp) {
+            if (!timestamp) return "offline";
+            const diff = Date.now() - timestamp;
+            if (diff < 60000) return "online";
+            const date = new Date(timestamp);
+            return `last seen ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }
+
         async function loadSidebarLists() {
             try {
                 const usersListEl = document.getElementById('users-list');
@@ -178,86 +210,97 @@
                 chatsListEl.innerHTML = '';
 
                 // Add Global Group to Chats
-                addGroupToList('global_room', 'Global Public Group', chatsListEl, 'group');
+                addGroupToList('global_room', 'Global Public Group', chatsListEl, 'group', 'Public Group');
 
                 // Load Custom Groups
                 const groupsSnap = await getDocs(collection(db, "groups"));
                 groupsSnap.forEach(docSnap => {
                     const groupData = docSnap.data();
                     if(groupData.id !== 'global_room') {
-                        addGroupToList(groupData.id, groupData.name, chatsListEl, 'group');
+                        addGroupToList(groupData.id, groupData.name, chatsListEl, 'group', 'Group Chat');
                     }
                 });
 
-                // Load Users List Tab
-                const usersSnap = await getDocs(collection(db, "users"));
-                if (usersSnap.empty) {
-                    usersListEl.innerHTML = `<div class="p-4 text-xs text-gray-400 text-center">No other registered users found.</div>`;
-                    return;
-                }
+                // Listen to users collection in real-time to update dots/last seen dynamically
+                onSnapshot(collection(db, "users"), (usersSnap) => {
+                    // Clear existing dynamic elements to avoid duplication on snapshot update
+                    const existingUsers = usersListEl.querySelectorAll('.user-item');
+                    existingUsers.forEach(el => el.remove());
 
-                usersSnap.forEach(docSnap => {
-                    const userData = docSnap.data();
-                    const username = userData.username || docSnap.id;
+                    usersSnap.forEach(docSnap => {
+                        const userData = docSnap.data();
+                        const username = userData.username || docSnap.id;
 
-                    if (username !== currentUser) {
-                        // Add to Users Tab
-                        const userDiv = document.createElement('div');
-                        userDiv.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
-                        userDiv.innerHTML = `
-                            <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mr-3">${username.charAt(0).toUpperCase()}</div>
-                            <div>
-                                <h4 class="font-medium text-gray-900">${username}</h4>
-                                <p class="text-xs text-gray-500">Registered User</p>
-                            </div>
-                        `;
-                        const privateRoomId = [currentUser, username].sort().join('_');
-                        userDiv.onclick = () => {
-                            switchChat(privateRoomId, username, 'private');
-                            switchSidebarTab('chats');
-                        };
-                        usersListEl.appendChild(userDiv);
+                        if (username !== currentUser) {
+                            const isOnline = userData.status === 'online' && (Date.now() - (userData.lastSeen || 0) < 45000);
+                            const statusText = isOnline ? 'Online' : formatLastSeen(userData.lastSeen);
+                            const dotColor = isOnline ? 'bg-green-500' : 'bg-gray-400';
 
-                        // Add to Chats Tab as well
-                        const chatDiv = document.createElement('div');
-                        chatDiv.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
-                        chatDiv.innerHTML = `
-                            <div class="w-10 h-10 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold mr-3">${username.charAt(0).toUpperCase()}</div>
-                            <div>
-                                <h4 class="font-medium text-gray-900">${username}</h4>
-                                <p class="text-xs text-emerald-600"><i class="fa-solid fa-lock"></i> Encrypted Chat</p>
-                            </div>
-                        `;
-                        chatDiv.onclick = () => switchChat(privateRoomId, username, 'private');
-                        chatsListEl.appendChild(chatDiv);
-                    }
+                            // Add to Users Tab
+                            const userDiv = document.createElement('div');
+                            userDiv.className = "user-item flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
+                            userDiv.innerHTML = `
+                                <div class="relative mr-3">
+                                    <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">${username.charAt(0).toUpperCase()}</div>
+                                    <span class="absolute bottom-0 right-0 w-3 h-3 ${dotColor} border-2 border-white rounded-full"></span>
+                                </div>
+                                <div>
+                                    <h4 class="font-medium text-gray-900">${username}</h4>
+                                    <p class="text-xs text-gray-500">${statusText}</p>
+                                </div>
+                            `;
+                            const privateRoomId = [currentUser, username].sort().join('_');
+                            userDiv.onclick = () => {
+                                switchChat(privateRoomId, username, 'private', isOnline ? 'Online' : statusText);
+                                switchSidebarTab('chats');
+                            };
+                            usersListEl.appendChild(userDiv);
+                        }
+                    });
                 });
+
             } catch (err) {
                 console.error("Error loading sidebar lists:", err);
             }
         }
 
-        function addGroupToList(groupId, groupName, container, type) {
+        function addGroupToList(groupId, groupName, container, type, subtitle) {
             const div = document.createElement('div');
             div.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
             div.innerHTML = `
                 <div class="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold mr-3"><i class="fa-solid fa-users text-sm"></i></div>
                 <div>
                     <h4 class="font-medium text-gray-900">${groupName}</h4>
-                    <p class="text-xs text-gray-500">Group Chat</p>
+                    <p class="text-xs text-gray-500">${subtitle}</p>
                 </div>
             `;
-            div.onclick = () => switchChat(groupId, groupName, type);
+            div.onclick = () => switchChat(groupId, groupName, type, subtitle);
             container.appendChild(div);
         }
 
-        window.switchChat = function(chatId, chatName, type) {
+        window.switchChat = function(chatId, chatName, type, statusSubtitle) {
             currentChatId = chatId;
             currentChatType = type;
             document.getElementById('active-chat-name').innerText = chatName;
-            document.getElementById('active-chat-status').innerText = type === 'group' ? 'Group Chat' : 'End-to-End Encrypted Private Chat';
+            document.getElementById('active-chat-status').innerText = statusSubtitle || (type === 'group' ? 'Group Chat' : 'End-to-End Encrypted Private Chat');
             
             if (unsubscribeMessages) unsubscribeMessages();
+            if (unsubscribePresence) unsubscribePresence();
+
+            // If private chat, listen to target user's online status in header real-time
+            if (type === 'private') {
+                const targetUser = chatId.split('_').find(u => u !== currentUser);
+                if (targetUser) {
+                    unsubscribePresence = onSnapshot(doc(db, "users", targetUser), (docSnap) => {
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            const isOnline = data.status === 'online' && (Date.now() - (data.lastSeen || 0) < 45000);
+                            document.getElementById('active-chat-status').innerText = isOnline ? 'Online' : formatLastSeen(data.lastSeen);
+                        }
+                    });
+                }
+            }
+
             listenMessages();
         }
 
@@ -284,7 +327,7 @@
             document.getElementById('new-group-name').value = '';
             closeCreateGroupModal();
             loadSidebarLists();
-            switchChat(groupId, groupName, 'group');
+            switchChat(groupId, groupName, 'group', 'Group Chat');
             switchSidebarTab('chats');
         }
 
