@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Clone - Secure E2EE Private & Group Chat</title>
+    <title>WhatsApp Clone - Secure Chat with Tabs</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
@@ -103,7 +103,7 @@
                 startChatApp();
             } catch (err) {
                 errorDiv.innerText = "Error: " + err.message;
-                errorDiv.classList.remove('hidden');
+                errorDiv.classList.add('hidden');
             }
         };
 
@@ -122,7 +122,32 @@
             location.reload();
         };
 
-        // Simple symmetric encryption/decryption using a shared secret key
+        // Tab Switching Logic
+        window.switchSidebarTab = function(tabName) {
+            const chatsTabBtn = document.getElementById('tab-chats-btn');
+            const usersTabBtn = document.getElementById('tab-users-btn');
+            const chatsContent = document.getElementById('chats-tab-content');
+            const usersContent = document.getElementById('users-tab-content');
+
+            if (tabName === 'chats') {
+                chatsTabBtn.classList.add('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
+                chatsTabBtn.classList.remove('text-gray-500');
+                usersTabBtn.classList.remove('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
+                usersTabBtn.classList.add('text-gray-500');
+
+                chatsContent.classList.remove('hidden');
+                usersContent.classList.add('hidden');
+            } else {
+                usersTabBtn.classList.add('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
+                usersTabBtn.classList.remove('text-gray-500');
+                chatsTabBtn.classList.remove('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
+                chatsTabBtn.classList.add('text-gray-500');
+
+                usersContent.classList.remove('hidden');
+                chatsContent.classList.add('hidden');
+            }
+        }
+
         function encryptText(text, secret) {
             try {
                 return btoa(unescape(encodeURIComponent(text.split('').map((char, index) => 
@@ -145,41 +170,65 @@
         }
 
         async function loadSidebarLists() {
+            // Load Users List Tab
             const usersSnap = await getDocs(collection(db, "users"));
             const usersListEl = document.getElementById('users-list');
             usersListEl.innerHTML = '';
-            usersSnap.forEach(docSnap => {
-                const userData = docSnap.data();
-                if (userData.username !== currentUser) {
-                    const div = document.createElement('div');
-                    div.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
-                    div.innerHTML = `
-                        <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mr-3">${userData.username.charAt(0).toUpperCase()}</div>
-                        <div>
-                            <h4 class="font-medium text-gray-900">${userData.username}</h4>
-                            <p class="text-xs text-emerald-600"><i class="fa-solid fa-lock"></i> Encrypted Private Chat</p>
-                        </div>
-                    `;
-                    const privateRoomId = [currentUser, userData.username].sort().join('_');
-                    div.onclick = () => switchChat(privateRoomId, userData.username, 'private');
-                    usersListEl.appendChild(div);
-                }
-            });
+            
+            // Load Chats Tab (Groups + Private Chats)
+            const chatsListEl = document.getElementById('chats-list');
+            chatsListEl.innerHTML = '';
 
+            // Add Global Group to Chats
+            addGroupToList('global_room', 'Global Public Group', chatsListEl, 'group');
+
+            // Load Custom Groups
             const groupsSnap = await getDocs(collection(db, "groups"));
-            const groupsListEl = document.getElementById('groups-list');
-            groupsListEl.innerHTML = '';
-            addGroupToList('global_room', 'Global Public Group', groupsListEl);
-
             groupsSnap.forEach(docSnap => {
                 const groupData = docSnap.data();
                 if(groupData.id !== 'global_room') {
-                    addGroupToList(groupData.id, groupData.name, groupsListEl);
+                    addGroupToList(groupData.id, groupData.name, chatsListEl, 'group');
+                }
+            });
+
+            // Populate Users & Private Chats
+            usersSnap.forEach(docSnap => {
+                const userData = docSnap.data();
+                if (userData.username !== currentUser) {
+                    // Add to Users Tab
+                    const userDiv = document.createElement('div');
+                    userDiv.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
+                    userDiv.innerHTML = `
+                        <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold mr-3">${userData.username.charAt(0).toUpperCase()}</div>
+                        <div>
+                            <h4 class="font-medium text-gray-900">${userData.username}</h4>
+                            <p class="text-xs text-gray-500">Registered User</p>
+                        </div>
+                    `;
+                    const privateRoomId = [currentUser, userData.username].sort().join('_');
+                    userDiv.onclick = () => {
+                        switchChat(privateRoomId, userData.username, 'private');
+                        switchSidebarTab('chats'); // Switch back to chats tab on selection
+                    };
+                    usersListEl.appendChild(userDiv);
+
+                    // Also add to Chats Tab as an active private chat shortcut
+                    const chatDiv = document.createElement('div');
+                    chatDiv.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
+                    chatDiv.innerHTML = `
+                        <div class="w-10 h-10 rounded-full bg-indigo-500 text-white flex items-center justify-center font-bold mr-3">${userData.username.charAt(0).toUpperCase()}</div>
+                        <div>
+                            <h4 class="font-medium text-gray-900">${userData.username}</h4>
+                            <p class="text-xs text-emerald-600"><i class="fa-solid fa-lock"></i> Encrypted Chat</p>
+                        </div>
+                    `;
+                    chatDiv.onclick = () => switchChat(privateRoomId, userData.username, 'private');
+                    chatsListEl.appendChild(chatDiv);
                 }
             });
         }
 
-        function addGroupToList(groupId, groupName, container) {
+        function addGroupToList(groupId, groupName, container, type) {
             const div = document.createElement('div');
             div.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
             div.innerHTML = `
@@ -189,7 +238,7 @@
                     <p class="text-xs text-gray-500">Group Chat</p>
                 </div>
             `;
-            div.onclick = () => switchChat(groupId, groupName, 'group');
+            div.onclick = () => switchChat(groupId, groupName, type);
             container.appendChild(div);
         }
 
@@ -227,6 +276,7 @@
             closeCreateGroupModal();
             loadSidebarLists();
             switchChat(groupId, groupName, 'group');
+            switchSidebarTab('chats');
         }
 
         function listenMessages() {
@@ -246,7 +296,6 @@
                     if (msg.deleted) {
                         contentHTML = `<span class="text-gray-400 italic text-xs"><i class="fa-solid fa-ban mr-1"></i> This message was deleted</span>`;
                     } else {
-                        // Decrypt text if private chat
                         let displayText = msg.text;
                         if (currentChatType === 'private' && msg.text) {
                             displayText = decryptText(msg.text, currentChatId);
@@ -262,7 +311,6 @@
                     }
 
                     let deleteBtnHTML = isMe && !msg.deleted ? `<button onclick="deleteMessage('${docId}')" class="absolute top-1 right-2 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-trash text-xs"></i></button>` : '';
-
                     let lockIcon = currentChatType === 'private' ? '<i class="fa-solid fa-lock text-[10px] text-emerald-600 ml-1" title="Encrypted"></i>' : '';
 
                     div.innerHTML = `
@@ -285,7 +333,6 @@
             if (!text) return;
             input.value = '';
 
-            // Encrypt text if private chat
             if (currentChatType === 'private') {
                 text = encryptText(text, currentChatId);
             }
@@ -429,14 +476,28 @@
                 </div>
             </div>
 
-            <div class="overflow-y-auto flex-1">
-                <!-- Groups Section -->
-                <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-600 uppercase tracking-wider">Groups</div>
-                <div id="groups-list"></div>
+            <!-- Tab Navigation Header -->
+            <div class="flex border-b bg-[#f0f2f5] text-sm">
+                <button id="tab-chats-btn" onclick="switchSidebarTab('chats')" class="flex-1 py-2 font-bold text-emerald-600 border-b-2 border-emerald-600 text-center transition">
+                    <i class="fa-solid fa-comments mr-1"></i> Chats
+                </button>
+                <button id="tab-users-btn" onclick="switchSidebarTab('users')" class="flex-1 py-2 font-semibold text-gray-500 text-center transition">
+                    <i class="fa-solid fa-address-book mr-1"></i> Users
+                </button>
+            </div>
 
-                <!-- Users Section (Private Encrypted Chat) -->
-                <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-600 uppercase tracking-wider mt-2">Private Chats (Encrypted)</div>
-                <div id="users-list"></div>
+            <!-- Tab Contents Area -->
+            <div class="overflow-y-auto flex-1">
+                <!-- Chats Tab Content -->
+                <div id="chats-tab-content">
+                    <div id="chats-list"></div>
+                </div>
+
+                <!-- Users Tab Content -->
+                <div id="users-tab-content" class="hidden">
+                    <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-500 uppercase tracking-wider">All Registered Users</div>
+                    <div id="users-list"></div>
+                </div>
             </div>
         </div>
 
@@ -463,7 +524,7 @@
                 <button onclick="document.getElementById('image-input').click()" class="text-gray-500 hover:text-emerald-600 transition"><i class="fa-solid fa-image text-lg"></i></button>
                 <button onclick="document.getElementById('audio-input').click()" class="text-gray-500 hover:text-emerald-600 transition mr-1"><i class="fa-solid fa-file-audio text-lg"></i></button>
 
-                <input type="text" id="message-input" placeholder="Type an encrypted message..." class="flex-1 bg-white px-4 py-2 rounded-lg text-sm outline-none">
+                <input type="text" id="message-input" placeholder="Type a message..." class="flex-1 bg-white px-4 py-2 rounded-lg text-sm outline-none">
 
                 <button id="mic-btn" onclick="toggleVoiceRecording()" class="text-gray-500 hover:text-red-600 transition"><i class="fa-solid fa-microphone text-lg" id="mic-icon"></i></button>
                 <button onclick="sendTextMessage()" class="bg-emerald-600 text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-emerald-700 transition"><i class="fa-solid fa-paper-plane text-sm"></i></button>
