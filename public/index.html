@@ -3,21 +3,55 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Chat with Delete Option</title>
+    <title>WhatsApp Chat with Auth</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="bg-[#f0f2f5] h-screen flex flex-col justify-center items-center">
 
-    <div class="w-full max-w-5xl h-[90vh] bg-white shadow-lg flex overflow-hidden rounded-lg">
-        
+    <!-- Auth Modal / Screen -->
+    <div id="auth-container" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-xl shadow-2xl w-96">
+            <h2 id="auth-title" class="text-2xl font-bold text-emerald-600 mb-6 text-center">Welcome to Chat</h2>
+            
+            <div id="auth-error" class="text-red-500 text-sm mb-4 hidden text-center"></div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                    <input type="text" id="auth-username" class="w-full px-3 py-2 border rounded-lg outline-none focus:border-emerald-600" placeholder="Enter username">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <input type="password" id="auth-password" class="w-full px-3 py-2 border rounded-lg outline-none focus:border-emerald-600" placeholder="Enter password">
+                </div>
+                
+                <div class="flex items-center justify-between text-sm">
+                    <label class="flex items-center">
+                        <input type="checkbox" id="remember-me" class="mr-2 rounded text-emerald-600"> Remember login
+                    </label>
+                </div>
+
+                <button id="auth-btn" onclick="handleAuth()" class="w-full bg-emerald-600 text-white py-2 rounded-lg font-semibold hover:bg-emerald-700 transition">Login</button>
+                
+                <p class="text-center text-sm text-gray-600 mt-4">
+                    <span id="auth-switch-text">Don't have an account?</span> 
+                    <button onclick="toggleAuthMode()" class="text-emerald-600 font-semibold hover:underline ml-1" id="auth-switch-btn">Sign Up</button>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Chat App UI -->
+    <div id="chat-app" class="w-full max-w-5xl h-[90vh] bg-white shadow-lg flex overflow-hidden rounded-lg hidden">
         <!-- Sidebar -->
         <div class="w-1/3 border-r border-gray-200 flex flex-col bg-white">
             <div class="bg-[#f0f2f5] px-4 py-3 flex justify-between items-center border-b">
                 <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center font-bold text-gray-600" id="user-avatar">U</div>
+                    <div class="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold" id="user-avatar">U</div>
                     <span class="font-medium text-gray-700" id="current-username">Loading...</span>
                 </div>
+                <button onclick="logout()" class="text-gray-500 hover:text-red-600 title="Logout" class="text-sm"><i class="fa-solid fa-right-from-bracket"></i></button>
             </div>
             
             <div class="p-3 bg-white border-b">
@@ -32,7 +66,7 @@
                     <div class="w-12 h-12 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold text-lg mr-3">G</div>
                     <div>
                         <h4 class="font-medium text-gray-900">Netlify Chat Room</h4>
-                        <p class="text-xs text-gray-500">With Delete for Everyone</p>
+                        <p class="text-xs text-gray-500">Secured with Login</p>
                     </div>
                 </div>
             </div>
@@ -58,35 +92,92 @@
                 <input type="file" id="image-input" accept="image/*" class="hidden" onchange="handleFileSelect(event, 'image')">
                 <input type="file" id="audio-input" accept="audio/*" class="hidden" onchange="handleFileSelect(event, 'audio')">
 
-                <button onclick="document.getElementById('image-input').click()" class="text-gray-500 hover:text-emerald-600 transition" title="Send Photo">
-                    <i class="fa-solid fa-image text-lg"></i>
-                </button>
-                <button onclick="document.getElementById('audio-input').click()" class="text-gray-500 hover:text-emerald-600 transition mr-1" title="Send Audio">
-                    <i class="fa-solid fa-file-audio text-lg"></i>
-                </button>
+                <button onclick="document.getElementById('image-input').click()" class="text-gray-500 hover:text-emerald-600 transition"><i class="fa-solid fa-image text-lg"></i></button>
+                <button onclick="document.getElementById('audio-input').click()" class="text-gray-500 hover:text-emerald-600 transition mr-1"><i class="fa-solid fa-file-audio text-lg"></i></button>
 
                 <input type="text" id="message-input" placeholder="Type a message" class="flex-1 bg-white px-4 py-2 rounded-lg text-sm outline-none">
 
-                <button id="mic-btn" onclick="toggleVoiceRecording()" class="text-gray-500 hover:text-red-600 transition" title="Voice Message">
-                    <i class="fa-solid fa-microphone text-lg" id="mic-icon"></i>
-                </button>
-
-                <button onclick="sendTextMessage()" class="bg-emerald-600 text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-emerald-700 transition">
-                    <i class="fa-solid fa-paper-plane text-sm"></i>
-                </button>
+                <button id="mic-btn" onclick="toggleVoiceRecording()" class="text-gray-500 hover:text-red-600 transition"><i class="fa-solid fa-microphone text-lg" id="mic-icon"></i></button>
+                <button onclick="sendTextMessage()" class="bg-emerald-600 text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-emerald-700 transition"><i class="fa-solid fa-paper-plane text-sm"></i></button>
             </div>
         </div>
-
     </div>
 
     <script>
-        const username = prompt("Enter your chat handle:") || "User_" + Math.floor(Math.random() * 1000);
-        document.getElementById('current-username').innerText = username;
-        document.getElementById('user-avatar').innerText = username.charAt(0).toUpperCase();
+        let isSignUpMode = false;
+        let currentUser = null;
+        let mediaRecorder, audioChunks = [], isRecording = false;
 
-        let mediaRecorder;
-        let audioChunks = [];
-        let isRecording = false;
+        // Check remembered session on load
+        window.onload = function() {
+            const rememberedUser = localStorage.getItem('chat_remembered_user') || sessionStorage.getItem('chat_session_user');
+            if (rememberedUser) {
+                currentUser = rememberedUser;
+                startChatApp();
+            }
+        };
+
+        function toggleAuthMode() {
+            isSignUpMode = !isSignUpMode;
+            document.getElementById('auth-title').innerText = isSignUpMode ? "Create Account" : "Welcome to Chat";
+            document.getElementById('auth-btn').innerText = isSignUpMode ? "Sign Up" : "Login";
+            document.getElementById('auth-switch-text').innerText = isSignUpMode ? "Already have an account?" : "Don't have an account?";
+            document.getElementById('auth-switch-btn').innerText = isSignUpMode ? "Login" : "Sign Up";
+            document.getElementById('auth-error').classList.add('hidden');
+        }
+
+        async function handleAuth() {
+            const username = document.getElementById('auth-username').value.trim();
+            const password = document.getElementById('auth-password').value.trim();
+            const rememberMe = document.getElementById('remember-me').checked;
+            const errorDiv = document.getElementById('auth-error');
+
+            if (!username || !password) {
+                errorDiv.innerText = "Please fill in all fields.";
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+
+            const action = isSignUpMode ? 'signup' : 'login';
+            try {
+                const res = await fetch('/.netlify/functions/messages', {
+                    method: 'POST',
+                    body: JSON.stringify({ action: action, username: username, password: password })
+                });
+                const result = await res.json();
+
+                if (result.success) {
+                    currentUser = username;
+                    if (rememberMe) {
+                        localStorage.setItem('chat_remembered_user', username);
+                    } else {
+                        sessionStorage.setItem('chat_session_user', username);
+                    }
+                    startChatApp();
+                } else {
+                    errorDiv.innerText = result.error || "Authentication failed.";
+                    errorDiv.classList.remove('hidden');
+                }
+            } catch (err) {
+                errorDiv.innerText = "Server error. Try again.";
+                errorDiv.classList.remove('hidden');
+            }
+        }
+
+        function startChatApp() {
+            document.getElementById('auth-container').classList.add('hidden');
+            document.getElementById('chat-app').classList.remove('hidden');
+            document.getElementById('current-username').innerText = currentUser;
+            document.getElementById('user-avatar').innerText = currentUser.charAt(0).toUpperCase();
+            fetchMessages();
+            setInterval(fetchMessages, 3000);
+        }
+
+        function logout() {
+            localStorage.removeItem('chat_remembered_user');
+            sessionStorage.removeItem('chat_session_user');
+            location.reload();
+        }
 
         async function fetchMessages() {
             try {
@@ -96,7 +187,8 @@
                 container.innerHTML = '';
                 
                 messages.forEach((msg, index) => {
-                    const isMe = msg.user === username;
+                    if (!msg.type && !msg.text && !msg.deleted) return; // skip auth logs
+                    const isMe = msg.user === currentUser;
                     const div = document.createElement('div');
                     div.className = `max-w-[70%] rounded-lg p-3 text-sm flex flex-col relative group ${isMe ? 'self-end bg-[#dcf8c6]' : 'self-start bg-white'}`;
                     
@@ -111,40 +203,29 @@
                         contentHTML = `<span class="text-gray-800 break-words">${msg.text}</span>`;
                     }
 
-                    // Delete button option for own messages
-                    let deleteBtnHTML = '';
-                    if (isMe && !msg.deleted) {
-                        deleteBtnHTML = `<button onclick="deleteMessage(${index})" class="absolute top-1 right-2 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition" title="Delete for everyone">
-                            <i class="fa-solid fa-trash text-xs"></i>
-                        </button>`;
-                    }
+                    let deleteBtnHTML = isMe && !msg.deleted ? `<button onclick="deleteMessage(${index})" class="absolute top-1 right-2 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-trash text-xs"></i></button>` : '';
 
                     div.innerHTML = `
-                        <div class="flex justify-between items-center mb-1">
-                            <span class="text-xs font-bold text-emerald-700">${msg.user}</span>
-                            ${deleteBtnHTML}
-                        </div>
+                        <div class="flex justify-between items-center mb-1"><span class="text-xs font-bold text-emerald-700">${msg.user}</span>${deleteBtnHTML}</div>
                         ${contentHTML}
                         <span class="text-[10px] text-gray-400 self-end mt-1">${new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                     `;
                     container.appendChild(div);
                 });
                 container.scrollTop = container.scrollHeight;
-            } catch (err) {
-                console.error("Failed to load messages", err);
-            }
+            } catch (err) { console.error(err); }
         }
 
         async function postMessage(payload) {
             await fetch('/.netlify/functions/messages', {
                 method: 'POST',
-                body: JSON.stringify({ action: 'add', user: username, ...payload, timestamp: Date.now() })
+                body: JSON.stringify({ action: 'add', user: currentUser, ...payload, timestamp: Date.now() })
             });
             fetchMessages();
         }
 
         async function deleteMessage(index) {
-            if (!confirm("Delete this message for everyone?")) return;
+            if (!confirm("Delete for everyone?")) return;
             await fetch('/.netlify/functions/messages', {
                 method: 'POST',
                 body: JSON.stringify({ action: 'delete', index: index })
@@ -164,9 +245,7 @@
             const file = event.target.files[0];
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = function(e) {
-                postMessage({ type: type, data: e.target.result });
-            };
+            reader.onload = e => postMessage({ type: type, data: e.target.result });
             reader.readAsDataURL(file);
             event.target.value = '';
         }
@@ -180,18 +259,16 @@
                     audioChunks = [];
                     mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
                     mediaRecorder.onstop = async () => {
-                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        const blob = new Blob(audioChunks, { type: 'audio/webm' });
                         const reader = new FileReader();
                         reader.onload = e => postMessage({ type: 'audio', data: e.target.result });
-                        reader.readAsDataURL(audioBlob);
+                        reader.readAsDataURL(blob);
                     };
                     mediaRecorder.start();
                     isRecording = true;
                     micIcon.classList.remove('fa-microphone');
                     micIcon.classList.add('fa-stop', 'text-red-600');
-                } catch (err) {
-                    alert("Microphone permission denied.");
-                }
+                } catch (e) { alert("Mic permission denied."); }
             } else {
                 mediaRecorder.stop();
                 isRecording = false;
@@ -203,9 +280,6 @@
         document.getElementById('message-input').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') sendTextMessage();
         });
-
-        setInterval(fetchMessages, 3000);
-        fetchMessages();
     </script>
 </body>
 </html>
