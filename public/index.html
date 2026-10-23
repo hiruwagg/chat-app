@@ -3,16 +3,47 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Clone - Secure Chat with Presence</title>
+    <title>Hiruwa | @hiruwa</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- Firebase SDKs -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        body { font-family: 'Inter', sans-serif; overflow: hidden; user-select: none; }
+        
+        /* Glassmorphism & Glow */
+        .glass-card {
+            background: rgba(15, 15, 20, 0.65);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 0 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(255, 255, 255, 0.05);
+        }
+        
+        .glow-text {
+            text-shadow: 0 0 12px rgba(255, 255, 255, 0.8), 0 0 25px rgba(255, 255, 255, 0.4);
+        }
+
+        .social-icon {
+            transition: all 0.3s ease;
+        }
+        .social-icon:hover {
+            transform: translateY(-4px) scale(1.1);
+            filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.8));
+        }
+
+        /* Typewriter Cursor */
+        .cursor::after {
+            content: '|';
+            animation: blink 1s infinite;
+        }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+    </style>
+
+    <!-- Firebase SDK for Real-time Profile Views -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getFirestore, collection, addDoc, doc, updateDoc, onSnapshot, query, orderBy, setDoc, getDoc, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, increment, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-        // REPLACE WITH YOUR FIREBASE CONFIG
         const firebaseConfig = {
             apiKey: "AIzaSyCGHuFn0rpJKzyajLw6VEbsVaEw6JAI4YM",
             authDomain: "chat-app-7b1ff.firebaseapp.com",
@@ -26,562 +57,162 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
-        let currentUser = null;
-        let currentPassword = null;
-        let currentChatId = "global_room";
-        let currentChatType = "group"; // 'group' or 'private'
-        let mediaRecorder, audioChunks = [], isRecording = false;
-        let unsubscribeMessages = null;
-        let unsubscribePresence = null;
-
-        window.onload = function() {
-            const rememberedUser = localStorage.getItem('chat_remembered_user');
-            const rememberedPass = localStorage.getItem('chat_remembered_pass');
-            const sessionUser = sessionStorage.getItem('chat_session_user');
-            const sessionPass = sessionStorage.getItem('chat_session_pass');
-
-            if (rememberedUser && rememberedPass) {
-                currentUser = rememberedUser;
-                currentPassword = rememberedPass;
-                startChatApp();
-            } else if (sessionUser && sessionPass) {
-                currentUser = sessionUser;
-                currentPassword = sessionPass;
-                startChatApp();
-            }
-        };
-
-        window.toggleAuthMode = function() {
-            const isSignUp = document.getElementById('auth-btn').innerText === "Login";
-            document.getElementById('auth-title').innerText = isSignUp ? "Create Account" : "Login to Chat";
-            document.getElementById('auth-btn').innerText = isSignUp ? "Sign Up" : "Login";
-            document.getElementById('auth-switch-text').innerText = isSignUp ? "Already have an account?" : "Don't have an account?";
-            document.getElementById('auth-switch-btn').innerText = isSignUp ? "Login" : "Sign Up";
-            document.getElementById('auth-error').classList.add('hidden');
-        };
-
-        window.handleAuth = async function() {
-            const username = document.getElementById('auth-username').value.trim();
-            const password = document.getElementById('auth-password').value.trim();
-            const rememberMe = document.getElementById('remember-me').checked;
-            const errorDiv = document.getElementById('auth-error');
-            const isSignUp = document.getElementById('auth-btn').innerText === "Sign Up";
-
-            if (!username || !password) {
-                errorDiv.innerText = "Please fill in all fields.";
-                errorDiv.classList.remove('hidden');
-                return;
-            }
-
+        async function initViews() {
+            const statsRef = doc(db, "profile_stats", "hiruwa");
             try {
-                const userRef = doc(db, "users", username);
-                const userSnap = await getDoc(userRef);
-
-                if (isSignUp) {
-                    if (userSnap.exists()) {
-                        errorDiv.innerText = "Username already exists!";
-                        errorDiv.classList.remove('hidden');
-                        return;
-                    }
-                    await setDoc(userRef, { password: password, username: username, status: 'online', lastSeen: Date.now() });
+                const snap = await getDoc(statsRef);
+                if (!snap.exists()) {
+                    await setDoc(statsRef, { views: 1 });
                 } else {
-                    if (!userSnap.exists() || userSnap.data().password !== password) {
-                        errorDiv.innerText = "Invalid username or password!";
-                        errorDiv.classList.remove('hidden');
-                        return;
+                    if (!sessionStorage.getItem('visited')) {
+                        await updateDoc(statsRef, { views: increment(1) });
+                        sessionStorage.setItem('visited', 'true');
                     }
                 }
-
-                currentUser = username;
-                currentPassword = password;
-                if (rememberMe) {
-                    localStorage.setItem('chat_remembered_user', username);
-                    localStorage.setItem('chat_remembered_pass', password);
-                } else {
-                    sessionStorage.setItem('chat_session_user', username);
-                    sessionStorage.setItem('chat_session_pass', password);
-                }
-                startChatApp();
-            } catch (err) {
-                errorDiv.innerText = "Error: " + err.message;
-                errorDiv.classList.remove('hidden');
-            }
-        };
-
-        function startChatApp() {
-            document.getElementById('auth-container').classList.add('hidden');
-            document.getElementById('chat-app').classList.remove('hidden');
-            document.getElementById('current-username').innerText = currentUser;
-            document.getElementById('user-avatar').innerText = currentUser.charAt(0).toUpperCase();
-            
-            setupPresence();
-            loadSidebarLists();
-            switchChat('global_room', 'Global Public Group', 'group');
-        }
-
-        // Presence Management (Online / Last Seen)
-        async function setupPresence() {
-            const userRef = doc(db, "users", currentUser);
-            await updateDoc(userRef, { status: 'online', lastSeen: Date.now() });
-
-            // Set offline on page unload/close
-            window.addEventListener('beforeunload', async () => {
-                await updateDoc(userRef, { status: 'offline', lastSeen: Date.now() });
-            });
-
-            // Periodically ping heartbeat
-            setInterval(async () => {
-                if (currentUser) {
-                    await updateDoc(userRef, { lastSeen: Date.now(), status: 'online' }).catch(() => {});
-                }
-            }, 30000);
-        }
-
-        window.logout = async function() {
-            if (currentUser) {
-                const userRef = doc(db, "users", currentUser);
-                await updateDoc(userRef, { status: 'offline', lastSeen: Date.now() }).catch(() => {});
-            }
-            localStorage.clear();
-            sessionStorage.clear();
-            location.reload();
-        };
-
-        window.switchSidebarTab = function(tabName) {
-            const chatsTabBtn = document.getElementById('tab-chats-btn');
-            const usersTabBtn = document.getElementById('tab-users-btn');
-            const chatsContent = document.getElementById('chats-tab-content');
-            const usersContent = document.getElementById('users-tab-content');
-
-            if (tabName === 'chats') {
-                chatsTabBtn.classList.add('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
-                chatsTabBtn.classList.remove('text-gray-500');
-                usersTabBtn.classList.remove('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
-                usersTabBtn.classList.add('text-gray-500');
-
-                chatsContent.classList.remove('hidden');
-                usersContent.classList.add('hidden');
-            } else {
-                usersTabBtn.classList.add('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
-                usersTabBtn.classList.remove('text-gray-500');
-                chatsTabBtn.classList.remove('border-b-2', 'border-emerald-600', 'text-emerald-600', 'font-bold');
-                chatsTabBtn.classList.add('text-gray-500');
-
-                usersContent.classList.remove('hidden');
-                chatsContent.classList.add('hidden');
-            }
-        }
-
-        function encryptText(text, secret) {
-            try {
-                return btoa(unescape(encodeURIComponent(text.split('').map((char, index) => 
-                    String.fromCharCode(char.charCodeAt(0) ^ secret.charCodeAt(index % secret.length))
-                ).join(''))));
+                onSnapshot(statsRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        document.getElementById('view-count').innerText = docSnap.data().views.toLocaleString();
+                    }
+                });
             } catch (e) {
-                return text;
+                console.error("View count error:", e);
             }
         }
 
-        function decryptText(encoded, secret) {
-            try {
-                let text = decodeURIComponent(escape(atob(encoded)));
-                return text.split('').map((char, index) => 
-                    String.fromCharCode(char.charCodeAt(0) ^ secret.charCodeAt(index % secret.length))
-                ).join('');
-            } catch (e) {
-                return "[Encrypted Message]";
-            }
-        }
-
-        function formatLastSeen(timestamp) {
-            if (!timestamp) return "offline";
-            const diff = Date.now() - timestamp;
-            if (diff < 60000) return "online";
-            const date = new Date(timestamp);
-            return `last seen ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-        }
-
-        async function loadSidebarLists() {
-            try {
-                const usersListEl = document.getElementById('users-list');
-                const chatsListEl = document.getElementById('chats-list');
-                
-                usersListEl.innerHTML = '';
-                chatsListEl.innerHTML = '';
-
-                // Add Global Group to Chats
-                addGroupToList('global_room', 'Global Public Group', chatsListEl, 'group', 'Public Group');
-
-                // Load Custom Groups
-                const groupsSnap = await getDocs(collection(db, "groups"));
-                groupsSnap.forEach(docSnap => {
-                    const groupData = docSnap.data();
-                    if(groupData.id !== 'global_room') {
-                        addGroupToList(groupData.id, groupData.name, chatsListEl, 'group', 'Group Chat');
-                    }
-                });
-
-                // Listen to users collection in real-time to update dots/last seen dynamically
-                onSnapshot(collection(db, "users"), (usersSnap) => {
-                    // Clear existing dynamic elements to avoid duplication on snapshot update
-                    const existingUsers = usersListEl.querySelectorAll('.user-item');
-                    existingUsers.forEach(el => el.remove());
-
-                    usersSnap.forEach(docSnap => {
-                        const userData = docSnap.data();
-                        const username = userData.username || docSnap.id;
-
-                        if (username !== currentUser) {
-                            const isOnline = userData.status === 'online' && (Date.now() - (userData.lastSeen || 0) < 45000);
-                            const statusText = isOnline ? 'Online' : formatLastSeen(userData.lastSeen);
-                            const dotColor = isOnline ? 'bg-green-500' : 'bg-gray-400';
-
-                            // Add to Users Tab
-                            const userDiv = document.createElement('div');
-                            userDiv.className = "user-item flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
-                            userDiv.innerHTML = `
-                                <div class="relative mr-3">
-                                    <div class="w-10 h-10 rounded-full bg-blue-500 text-white flex items-center justify-center font-bold">${username.charAt(0).toUpperCase()}</div>
-                                    <span class="absolute bottom-0 right-0 w-3 h-3 ${dotColor} border-2 border-white rounded-full"></span>
-                                </div>
-                                <div>
-                                    <h4 class="font-medium text-gray-900">${username}</h4>
-                                    <p class="text-xs text-gray-500">${statusText}</p>
-                                </div>
-                            `;
-                            const privateRoomId = [currentUser, username].sort().join('_');
-                            userDiv.onclick = () => {
-                                switchChat(privateRoomId, username, 'private', isOnline ? 'Online' : statusText);
-                                switchSidebarTab('chats');
-                            };
-                            usersListEl.appendChild(userDiv);
-                        }
-                    });
-                });
-
-            } catch (err) {
-                console.error("Error loading sidebar lists:", err);
-            }
-        }
-
-        function addGroupToList(groupId, groupName, container, type, subtitle) {
-            const div = document.createElement('div');
-            div.className = "flex items-center px-4 py-3 hover:bg-gray-100 cursor-pointer border-b transition";
-            div.innerHTML = `
-                <div class="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold mr-3"><i class="fa-solid fa-users text-sm"></i></div>
-                <div>
-                    <h4 class="font-medium text-gray-900">${groupName}</h4>
-                    <p class="text-xs text-gray-500">${subtitle}</p>
-                </div>
-            `;
-            div.onclick = () => switchChat(groupId, groupName, type, subtitle);
-            container.appendChild(div);
-        }
-
-        window.switchChat = function(chatId, chatName, type, statusSubtitle) {
-            currentChatId = chatId;
-            currentChatType = type;
-            document.getElementById('active-chat-name').innerText = chatName;
-            document.getElementById('active-chat-status').innerText = statusSubtitle || (type === 'group' ? 'Group Chat' : 'End-to-End Encrypted Private Chat');
-            
-            if (unsubscribeMessages) unsubscribeMessages();
-            if (unsubscribePresence) unsubscribePresence();
-
-            // If private chat, listen to target user's online status in header real-time
-            if (type === 'private') {
-                const targetUser = chatId.split('_').find(u => u !== currentUser);
-                if (targetUser) {
-                    unsubscribePresence = onSnapshot(doc(db, "users", targetUser), (docSnap) => {
-                        if (docSnap.exists()) {
-                            const data = docSnap.data();
-                            const isOnline = data.status === 'online' && (Date.now() - (data.lastSeen || 0) < 45000);
-                            document.getElementById('active-chat-status').innerText = isOnline ? 'Online' : formatLastSeen(data.lastSeen);
-                        }
-                    });
-                }
-            }
-
-            listenMessages();
-        }
-
-        window.openCreateGroupModal = function() {
-            document.getElementById('group-modal').classList.remove('hidden');
-        }
-
-        window.closeCreateGroupModal = function() {
-            document.getElementById('group-modal').classList.add('hidden');
-        }
-
-        window.createGroup = async function() {
-            const groupName = document.getElementById('new-group-name').value.trim();
-            if (!groupName) return alert("Enter group name");
-
-            const groupId = 'group_' + Date.now();
-            await setDoc(doc(db, "groups", groupId), {
-                id: groupId,
-                name: groupName,
-                createdBy: currentUser,
-                createdAt: Date.now()
-            });
-
-            document.getElementById('new-group-name').value = '';
-            closeCreateGroupModal();
-            loadSidebarLists();
-            switchChat(groupId, groupName, 'group', 'Group Chat');
-            switchSidebarTab('chats');
-        }
-
-        function listenMessages() {
-            const q = query(collection(db, "rooms", currentChatId, "messages"), orderBy("timestamp", "asc"));
-            unsubscribeMessages = onSnapshot(q, (snapshot) => {
-                const container = document.getElementById('chat-messages');
-                container.innerHTML = '';
-                
-                snapshot.forEach((documentSnapshot) => {
-                    const msg = documentSnapshot.data();
-                    const docId = documentSnapshot.id;
-                    const isMe = msg.user === currentUser;
-                    const div = document.createElement('div');
-                    div.className = `max-w-[70%] rounded-lg p-3 text-sm flex flex-col relative group ${isMe ? 'self-end bg-[#dcf8c6]' : 'self-start bg-white'}`;
-                    
-                    let contentHTML = '';
-                    if (msg.deleted) {
-                        contentHTML = `<span class="text-gray-400 italic text-xs"><i class="fa-solid fa-ban mr-1"></i> This message was deleted</span>`;
-                    } else {
-                        let displayText = msg.text;
-                        if (currentChatType === 'private' && msg.text) {
-                            displayText = decryptText(msg.text, currentChatId);
-                        }
-
-                        if (msg.type === 'image') {
-                            contentHTML = `<img src="${msg.data}" class="rounded-lg max-h-48 object-cover mb-1 cursor-pointer" onclick="window.open('${msg.data}')">`;
-                        } else if (msg.type === 'audio') {
-                            contentHTML = `<audio controls class="w-64 mb-1"><source src="${msg.data}" type="audio/webm"></audio>`;
-                        } else {
-                            contentHTML = `<span class="text-gray-800 break-words">${displayText}</span>`;
-                        }
-                    }
-
-                    let deleteBtnHTML = isMe && !msg.deleted ? `<button onclick="deleteMessage('${docId}')" class="absolute top-1 right-2 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-trash text-xs"></i></button>` : '';
-                    let lockIcon = currentChatType === 'private' ? '<i class="fa-solid fa-lock text-[10px] text-emerald-600 ml-1" title="Encrypted"></i>' : '';
-
-                    div.innerHTML = `
-                        <div class="flex justify-between items-center mb-1">
-                            <span class="text-xs font-bold text-emerald-700">${msg.user} ${lockIcon}</span>
-                            ${deleteBtnHTML}
-                        </div>
-                        ${contentHTML}
-                        <span class="text-[10px] text-gray-400 self-end mt-1">${new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                    `;
-                    container.appendChild(div);
-                });
-                container.scrollTop = container.scrollHeight;
-            });
-        }
-
-        window.sendTextMessage = async function() {
-            const input = document.getElementById('message-input');
-            let text = input.value.trim();
-            if (!text) return;
-            input.value = '';
-
-            if (currentChatType === 'private') {
-                text = encryptText(text, currentChatId);
-            }
-            
-            await addDoc(collection(db, "rooms", currentChatId, "messages"), {
-                user: currentUser,
-                type: 'text',
-                text: text,
-                timestamp: Date.now(),
-                deleted: false
-            });
-        };
-
-        window.handleFileSelect = async function(event, type) {
-            const file = event.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = async function(e) {
-                await addDoc(collection(db, "rooms", currentChatId, "messages"), {
-                    user: currentUser,
-                    type: type,
-                    data: e.target.result,
-                    timestamp: Date.now(),
-                    deleted: false
-                });
-            };
-            reader.readAsDataURL(file);
-            event.target.value = '';
-        };
-
-        window.deleteMessage = async function(docId) {
-            if (!confirm("Delete for everyone?")) return;
-            const msgRef = doc(db, "rooms", currentChatId, "messages", docId);
-            await updateDoc(msgRef, {
-                deleted: true,
-                text: '',
-                data: ''
-            });
-        };
-
-        window.toggleVoiceRecording = async function() {
-            const micIcon = document.getElementById('mic-icon');
-            if (!isRecording) {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    mediaRecorder = new MediaRecorder(stream);
-                    audioChunks = [];
-                    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-                    mediaRecorder.onstop = async () => {
-                        const blob = new Blob(audioChunks, { type: 'audio/webm' });
-                        const reader = new FileReader();
-                        reader.onload = async function(e) {
-                            await addDoc(collection(db, "rooms", currentChatId, "messages"), {
-                                user: currentUser,
-                                type: 'audio',
-                                data: e.target.result,
-                                timestamp: Date.now(),
-                                deleted: false
-                            });
-                        };
-                        reader.readAsDataURL(blob);
-                    };
-                    mediaRecorder.start();
-                    isRecording = true;
-                    micIcon.classList.remove('fa-microphone');
-                    micIcon.classList.add('fa-stop', 'text-red-600');
-                } catch (e) { alert("Mic permission denied."); }
-            } else {
-                mediaRecorder.stop();
-                isRecording = false;
-                micIcon.classList.remove('fa-stop', 'text-red-600');
-                micIcon.classList.add('fa-microphone');
-            }
-        };
-
-        document.addEventListener('DOMContentLoaded', () => {
-            const msgInput = document.getElementById('message-input');
-            if(msgInput) {
-                msgInput.addEventListener('keypress', (e) => {
-                    if (e.key === 'Enter') sendTextMessage();
-                });
-            }
-        });
+        window.addEventListener('DOMContentLoaded', initViews);
     </script>
 </head>
-<body class="bg-[#f0f2f5] h-screen flex flex-col justify-center items-center">
+<body class="bg-black text-white h-screen w-screen flex items-center justify-center relative">
 
-    <!-- Auth Modal -->
-    <div id="auth-container" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-        <div class="bg-white p-8 rounded-xl shadow-2xl w-96">
-            <h2 id="auth-title" class="text-2xl font-bold text-emerald-600 mb-6 text-center">Login to Chat</h2>
-            <div id="auth-error" class="text-red-500 text-sm mb-4 hidden text-center"></div>
-            <div class="space-y-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Username</label>
-                    <input type="text" id="auth-username" class="w-full px-3 py-2 border rounded-lg outline-none focus:border-emerald-600" placeholder="Enter username">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                    <input type="password" id="auth-password" class="w-full px-3 py-2 border rounded-lg outline-none focus:border-emerald-600" placeholder="Enter password">
-                </div>
-                <div class="flex items-center justify-between text-sm">
-                    <label class="flex items-center">
-                        <input type="checkbox" id="remember-me" class="mr-2 rounded text-emerald-600"> Remember login
-                    </label>
-                </div>
-                <button id="auth-btn" onclick="handleAuth()" class="w-full bg-emerald-600 text-white py-2 rounded-lg font-semibold hover:bg-emerald-700 transition">Login</button>
-                <p class="text-center text-sm text-gray-600 mt-4">
-                    <span id="auth-switch-text">Don't have an account?</span> 
-                    <button onclick="toggleAuthMode()" class="text-emerald-600 font-semibold hover:underline ml-1" id="auth-switch-btn">Sign Up</button>
-                </p>
-            </div>
-        </div>
+    <!-- Click to Enter Overlay -->
+    <div id="enter-overlay" onclick="enterSite()" class="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center cursor-pointer transition-opacity duration-700">
+        <p class="text-white text-lg font-semibold tracking-widest animate-pulse glow-text">click to enter...</p>
     </div>
 
-    <!-- Create Group Modal -->
-    <div id="group-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-        <div class="bg-white p-6 rounded-xl shadow-2xl w-80">
-            <h3 class="text-lg font-bold text-gray-800 mb-4">Create New Group</h3>
-            <input type="text" id="new-group-name" placeholder="Group Name" class="w-full px-3 py-2 border rounded-lg outline-none mb-4 focus:border-emerald-600">
-            <div class="flex justify-end space-x-2">
-                <button onclick="closeCreateGroupModal()" class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg text-sm">Cancel</button>
-                <button onclick="createGroup()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm">Create</button>
-            </div>
-        </div>
-    </div>
+    <!-- Background Video / Animated Wallpaper -->
+    <video id="bg-video" loop muted playsinline class="fixed inset-0 w-full h-full object-cover opacity-40 z-0">
+        <source src="https://assets.mixkit.co/videos/preview/mixkit-stars-in-space-1610-large.mp4" type="video/mp4">
+    </video>
 
-    <!-- Main Chat UI -->
-    <div id="chat-app" class="w-full max-w-5xl h-[90vh] bg-white shadow-lg flex overflow-hidden rounded-lg hidden">
+    <!-- Background Music -->
+    <audio id="bg-audio" loop>
+        <!-- ඔයාට කැමති MP3 ලින්ක් එකක් මෙතනට දාන්න පුළුවන් -->
+        <source src="https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=lofi-study-112191.mp3" type="audio/mp3">
+    </audio>
+
+    <!-- Volume Control -->
+    <button onclick="toggleMute()" class="fixed top-6 left-6 z-20 w-10 h-10 rounded-full glass-card flex items-center justify-center text-gray-300 hover:text-white transition">
+        <i id="volume-icon" class="fa-solid fa-volume-high text-sm"></i>
+    </button>
+
+    <!-- Main Profile Card -->
+    <div id="profile-card" class="glass-card z-10 w-11/12 max-w-md rounded-2xl p-8 flex flex-col items-center text-center transform scale-95 opacity-0 transition-all duration-700">
         
-        <!-- Sidebar -->
-        <div class="w-1/3 border-r border-gray-200 flex flex-col bg-white">
-            <div class="bg-[#f0f2f5] px-4 py-3 flex justify-between items-center border-b">
-                <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold" id="user-avatar">U</div>
-                    <span class="font-medium text-gray-700" id="current-username">Loading...</span>
-                </div>
-                <div class="flex items-center space-x-2">
-                    <button onclick="openCreateGroupModal()" class="text-gray-600 hover:text-emerald-600" title="Create Group"><i class="fa-solid fa-users-rectangle text-lg"></i></button>
-                    <button onclick="logout()" class="text-gray-500 hover:text-red-600" title="Logout"><i class="fa-solid fa-right-from-bracket text-lg"></i></button>
-                </div>
-            </div>
-
-            <!-- Tab Navigation Header -->
-            <div class="flex border-b bg-[#f0f2f5] text-sm">
-                <button id="tab-chats-btn" onclick="switchSidebarTab('chats')" class="flex-1 py-2 font-bold text-emerald-600 border-b-2 border-emerald-600 text-center transition">
-                    <i class="fa-solid fa-comments mr-1"></i> Chats
-                </button>
-                <button id="tab-users-btn" onclick="switchSidebarTab('users')" class="flex-1 py-2 font-semibold text-gray-500 text-center transition">
-                    <i class="fa-solid fa-address-book mr-1"></i> Users
-                </button>
-            </div>
-
-            <!-- Tab Contents Area -->
-            <div class="overflow-y-auto flex-1">
-                <!-- Chats Tab Content -->
-                <div id="chats-tab-content">
-                    <div id="chats-list"></div>
-                </div>
-
-                <!-- Users Tab Content -->
-                <div id="users-tab-content" class="hidden">
-                    <div class="px-4 py-2 bg-gray-100 font-semibold text-xs text-gray-500 uppercase tracking-wider">All Registered Users</div>
-                    <div id="users-list"></div>
-                </div>
-            </div>
+        <!-- Avatar -->
+        <div class="relative mb-4">
+            <img src="https://i.pinimg.com/736x/8b/16/7a/8b167af653c2399dd93b952a48740620.jpg" alt="Avatar" class="w-24 h-24 rounded-full object-cover border-2 border-white/20 shadow-lg">
+            <span class="absolute bottom-1 right-1 w-4 h-4 bg-emerald-500 border-2 border-black rounded-full" title="Online"></span>
         </div>
 
-        <!-- Chat Area -->
-        <div class="w-2/3 flex flex-col bg-[#efeae2]">
-            <div class="bg-[#f0f2f5] px-4 py-3 flex justify-between items-center border-b">
-                <div class="flex items-center space-x-3">
-                    <div class="w-10 h-10 rounded-full bg-emerald-500 text-white flex items-center justify-center font-bold"><i class="fa-solid fa-comments"></i></div>
-                    <div>
-                        <h3 class="font-medium text-gray-900" id="active-chat-name">Global Public Group</h3>
-                        <p class="text-xs text-emerald-600 font-semibold" id="active-chat-status">Group Chat</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Messages Container -->
-            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-3 flex flex-col"></div>
-
-            <!-- Input Footer -->
-            <div class="bg-[#f0f2f5] px-4 py-3 flex items-center space-x-3 relative">
-                <input type="file" id="image-input" accept="image/*" class="hidden" onchange="handleFileSelect(event, 'image')">
-                <input type="file" id="audio-input" accept="audio/*" class="hidden" onchange="handleFileSelect(event, 'audio')">
-
-                <button onclick="document.getElementById('image-input').click()" class="text-gray-500 hover:text-emerald-600 transition"><i class="fa-solid fa-image text-lg"></i></button>
-                <button onclick="document.getElementById('audio-input').click()" class="text-gray-500 hover:text-emerald-600 transition mr-1"><i class="fa-solid fa-file-audio text-lg"></i></button>
-
-                <input type="text" id="message-input" placeholder="Type a message..." class="flex-1 bg-white px-4 py-2 rounded-lg text-sm outline-none">
-
-                <button id="mic-btn" onclick="toggleVoiceRecording()" class="text-gray-500 hover:text-red-600 transition"><i class="fa-solid fa-microphone text-lg" id="mic-icon"></i></button>
-                <button onclick="sendTextMessage()" class="bg-emerald-600 text-white w-10 h-10 rounded-full flex items-center justify-center hover:bg-emerald-700 transition"><i class="fa-solid fa-paper-plane text-sm"></i></button>
-            </div>
+        <!-- Username & Badges -->
+        <div class="flex items-center space-x-2 mb-1">
+            <h1 class="text-2xl font-extrabold tracking-wide glow-text">Hiruwa</h1>
+            <i class="fa-solid fa-certificate text-blue-400 text-sm" title="Verified"></i>
+            <i class="fa-solid fa-gem text-purple-400 text-sm" title="Premium"></i>
         </div>
+
+        <!-- Typewriter Bio -->
+        <p id="typewriter" class="text-sm text-gray-300 h-5 mb-4 cursor font-mono"></p>
+
+        <!-- Location & Info -->
+        <div class="flex items-center space-x-4 text-xs text-gray-400 mb-6">
+            <span><i class="fa-solid fa-location-dot mr-1 text-white/70"></i> Sri Lanka</span>
+            <span><i class="fa-solid fa-eye mr-1 text-white/70"></i> <span id="view-count">1</span> views</span>
+        </div>
+
+        <!-- Custom Link Buttons -->
+        <div class="w-full space-y-3 mb-6">
+            <a href="https://discord.com" target="_blank" class="w-full py-3 px-4 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-between transition group">
+                <div class="flex items-center space-x-3">
+                    <i class="fa-brands fa-discord text-indigo-400 text-xl"></i>
+                    <span class="text-sm font-medium">Join My Discord</span>
+                </div>
+                <i class="fa-solid fa-arrow-up-right-from-square text-xs text-gray-500 group-hover:text-white transition"></i>
+            </a>
+
+            <a href="https://github.com/hiruwagg" target="_blank" class="w-full py-3 px-4 rounded-xl bg-white/5 hover:bg-white/15 border border-white/10 flex items-center justify-between transition group">
+                <div class="flex items-center space-x-3">
+                    <i class="fa-brands fa-github text-white text-xl"></i>
+                    <span class="text-sm font-medium">My GitHub Projects</span>
+                </div>
+                <i class="fa-solid fa-arrow-up-right-from-square text-xs text-gray-500 group-hover:text-white transition"></i>
+            </a>
+        </div>
+
+        <!-- Social Media Icons Row -->
+        <div class="flex items-center justify-center space-x-6 text-2xl text-gray-300 mt-2">
+            <a href="https://instagram.com" target="_blank" class="social-icon hover:text-white"><i class="fa-brands fa-instagram"></i></a>
+            <a href="https://youtube.com" target="_blank" class="social-icon hover:text-white"><i class="fa-brands fa-youtube"></i></a>
+            <a href="https://tiktok.com" target="_blank" class="social-icon hover:text-white"><i class="fa-brands fa-tiktok"></i></a>
+            <a href="https://open.spotify.com" target="_blank" class="social-icon hover:text-white"><i class="fa-brands fa-spotify"></i></a>
+        </div>
+
     </div>
+
+    <script>
+        const bioTexts = ["Developer & Creator", "Welcome to my page", "Coding the future..."];
+        let textIndex = 0;
+        let charIndex = 0;
+        let isDeleting = false;
+
+        function typeEffect() {
+            const current = bioTexts[textIndex];
+            const el = document.getElementById('typewriter');
+            
+            if (isDeleting) {
+                el.innerText = current.substring(0, charIndex--);
+            } else {
+                el.innerText = current.substring(0, charIndex++);
+            }
+
+            let speed = isDeleting ? 50 : 100;
+
+            if (!isDeleting && charIndex === current.length + 1) {
+                speed = 2000; // Pause at end
+                isDeleting = true;
+            } else if (isDeleting && charIndex === 0) {
+                isDeleting = false;
+                textIndex = (textIndex + 1) % bioTexts.length;
+                speed = 500;
+            }
+
+            setTimeout(typeEffect, speed);
+        }
+
+        function enterSite() {
+            const overlay = document.getElementById('enter-overlay');
+            const card = document.getElementById('profile-card');
+            const audio = document.getElementById('bg-audio');
+            const video = document.getElementById('bg-video');
+
+            overlay.style.opacity = '0';
+            setTimeout(() => overlay.style.display = 'none', 700);
+
+            card.classList.remove('scale-95', 'opacity-0');
+            card.classList.add('scale-100', 'opacity-100');
+
+            audio.volume = 0.4;
+            audio.play().catch(() => {});
+            video.play().catch(() => {});
+            typeEffect();
+        }
+
+        function toggleMute() {
+            const audio = document.getElementById('bg-audio');
+            const icon = document.getElementById('volume-icon');
+            audio.muted = !audio.muted;
+            icon.className = audio.muted ? "fa-solid fa-volume-xmark text-sm text-red-400" : "fa-solid fa-volume-high text-sm";
+        }
+    </script>
 </body>
 </html>
